@@ -1,32 +1,32 @@
-# Llama3.1로 RAG를 구현하기 
+# 使用 Llama3.1 实施 RAG
 
-여기에서는 Llama3.1를 이용해 RAG를 구현하는 과정을 설명합니다. 여기에서는 Advanced RAG에서 성능 향상을 위해 활용되는 parent/child chunking, lexical/semantic 검색등이 포함되어 있습니다. 전체적인 Architecture는 아래와 같습니다.
+这里我们描述一下使用Llama3.1实现RAG的过程。这包括父/子分块和词汇/语义搜索，用于提高 Advanced RAG 的性能。整体架构如下。
 
-1) 브라우저를 이용하여 CloudFront의 Domain로 접속하면 S3에 있는 html, css, js를 이용해 채팅화면 UI를 구성합니다.
-2) 사용자가 userId를 넣고 접속하면, DynamoDB에 저장된 과거의 채팅이력을 조회하여 화면에 표시합니다.
-3) 사용자가 채팅창에서 메시지를 입력하면 메시지는 WebSocket을 지원하는 API-Gateway를 통해 Lambda (chat)에 전달됩니다.
-4) Lambda(chat)은 userId로 된 채팅이력이 있는지 조회하여 로드합니다.
-5) 채팅 이력과 현재의 질문을 조합하여 새로운 질문을 만든후에, Embedding후 Vector store인 OpenSearch에 조회합니다.
-6) 새로운 질문(Revised Question)과 RAG로 얻어진 관련된 문서들(Relevant documents)를 context로 Llama3 LLM에 답변을 요청합니다.
-7) Llama3가 생성한 답변은 Lambda (chat)과 API Gateway를 거쳐서 Client에 Websocket으로 전달됩니다. 
+1) 当您使用浏览器访问 CloudFront 的域时，聊天屏幕 UI 是使用 S3 中的 html、css 和 js 构建的。
+2) 当用户输入 userId 并连接时，将搜索 DynamoDB 中存储的过去聊天记录并将其显示在屏幕上。
+3) 当用户在聊天窗口中输入消息时，该消息将通过支持 WebSocket 的 API 网关传递到 Lambda（聊天）。
+4) Lambda（聊天）检查是否存在带有 userId 的聊天历史记录并加载它。
+5) 通过组合聊天历史记录和当前问题来创建一个新问题，然后将其嵌入并在矢量存储 OpenSearch 中进行搜索。
+6) 我们要求 Llama3 LLM 使用新问题（修订后的问题）和通过 RAG 获得的相关文件作为上下文进行答复。
+7) Llama3 生成的答案通过 Lambda（聊天）和 API 网关，并作为 Websocket 传递给客户端。
 
 <img src="./images/basic-architecture.png" width="800">
 
 ## Llama3.1 
 
-[Llama3.1 paper](https://scontent-ssn1-1.xx.fbcdn.net/v/t39.2365-6/452387774_1036916434819166_4173978747091533306_n.pdf?_nc_cat=104&ccb=1-7&_nc_sid=3c67a6&_nc_ohc=t6egZJ8QdI4Q7kNvgEBG6o4&_nc_ht=scontent-ssn1-1.xx&oh=00_AYBdfFc8msOH4iSUsYP_7d5LJLfxTrtJ_aV2U5elEF-Ihg&oe=66A60A8D)와 같이 다양한 업그레이드가 있었습니다. 
+[Llama3.1 paper](https://scontent-ssn1-1.xx.fbcdn.net/v/t39.2365-6/452387774_1036916434819166_4173978747091533306_n.pdf?_nc_cat=104&ccb=1-7&_nc_sid=3c67a6&_nc_ohc=t6egZJ8QdI4Q7kNvgEBG6o4&_nc_ht=scontent-ssn1-1.xx&oh=00_AYBdfFc8msOH4iSUsYP_7d5LJLfxTrtJ_aV2U5elEF-Ihg&oe=66A60A8D)已经有各种升级，比如Llama3.1论文。. 
 
 ![llama3 1](https://github.com/user-attachments/assets/9abf01bf-f044-4bbf-b825-d73035a78287)
 
-Supported languages for Llama 3.1: English, French, German, Hindi, Italian, Portuguese, Spanish, Thai (July 24).
-Llama3.1는 [multilingual을 지원](https://scontent-ssn1-1.xx.fbcdn.net/v/t39.2365-6/452387774_1036916434819166_4173978747091533306_n.pdf?_nc_cat=104&ccb=1-7&_nc_sid=3c67a6&_nc_ohc=t6egZJ8QdI4Q7kNvgEBG6o4&_nc_ht=scontent-ssn1-1.xx&oh=00_AYBdfFc8msOH4iSUsYP_7d5LJLfxTrtJ_aV2U5elEF-Ihg&oe=66A60A8D)합니다.
+Llama 3.1 支持的语言：英语、法语、德语、印地语、意大利语、葡萄牙语、西班牙语、泰语（7 月 24 日）。 Llama3.1(July 24).
+Llama3.1 [multilingual](https://scontent-ssn1-1.xx.fbcdn.net/v/t39.2365-6/452387774_1036916434819166_4173978747091533306_n.pdf?_nc_cat=104&ccb=1-7&_nc_sid=3c67a6&_nc_ohc=t6egZJ8QdI4Q7kNvgEBG6o4&_nc_ht=scontent-ssn1-1.xx&oh=00_AYBdfFc8msOH4iSUsYP_7d5LJLfxTrtJ_aV2U5elEF-Ihg&oe=66A60A8D).
 
-## Llama3 RAG 구현 
+## Llama3 RAG 实施
 
 
-### LangChain을 이용한 Llama3.1 설정
+### Llama3.1使用LangChain配置
 
-LangChain의 [ChatBedrock](https://python.langchain.com/v0.2/docs/integrations/chat/bedrock/)로 API을 이용합니다.
+我们使用LangChain 的 [ChatBedrock](https://python.langchain.com/v0.2/docs/integrations/chat/bedrock/).
 
 ```python
 boto3_bedrock = boto3.client(
@@ -51,7 +51,7 @@ chat = ChatBedrock(
 )
 ```
 
-Llama3.1에 대한 모델 정보는 아래와 같습니다.
+Llama3.1 的型号信息如下。
 
 ```java
 const llama3 = [
@@ -63,10 +63,9 @@ const llama3 = [
 ];
 ```
 
-### Basic Chat
+### 基本聊天
 
-Prompt를 이용해 chatbot의 이름과 Role을 지정할 수 있습니다. Chat history는 MessagesPlaceholder()를 이용해 반영합니다.
-
+您可以使用提示指定聊天机器人的名称和角色。聊天历史记录使用 MessagesPlaceholder() 反映。
 
 ```python
 def general_conversation(connectionId, requestId, chat, query):
@@ -105,7 +104,7 @@ def general_conversation(connectionId, requestId, chat, query):
     return msg
 ```
 
-여기서 Stream은 아래와 같이 event를 추출하여 json format으로 client에 결과를 전달합니다. 
+这里，流如下所示提取事件，并将结果以 json 格式传递给客户端。
 
 ```python
 def readStreamMsg(connectionId, requestId, stream):
@@ -123,9 +122,9 @@ def readStreamMsg(connectionId, requestId, stream):
     return msg
 ```
 
-### 대화 이력의 관리
+### 对话历史管理
 
-사용자가 접속하면, DynamoDB에서 대화 이력을 가져옵니다. 이것은 최초 접속 1회만 수행합니다. 
+当用户连接时，将从 DynamoDB 检索对话历史记录。这仅在初始连接时发生一次。
 
 ```python
 def load_chat_history(userId, allowTime):
@@ -143,7 +142,7 @@ def load_chat_history(userId, allowTime):
 
 ```
 
-Context에 넣을 history를 가져와서 memory_chain에 등록합니다.
+导入要放置在上下文中的历史记录并将其注册到memory_chain中。
 
 ```pytho
 for item in response['Items']:
@@ -159,7 +158,7 @@ for item in response['Items']:
             memory_chain.chat_memory.add_ai_message(msg) 
 ```
 
-Lambda와 같은 서버리스는 이벤트가 있을 경우에만 사용이 가능하므로, 이벤트의 userId를 기준으로 메모리를 관리합니다. 
+Serverless，比如Lambda，只有在有事件的时候才能使用，所以内存是根据事件的userId来管理的。
 
 map_chain = dict()
 
@@ -172,18 +171,18 @@ else:
     map_chain[userId] = memory_chain
 ```
 
-새로운 입력(text)과 응답(msg)를 user/ai message로 저장합니다.
+将新输入（文本）和响应（消息）保存为 user/ai 消息。
 
 ```python
 memory_chain.chat_memory.add_user_message(text)
 memory_chain.chat_memory.add_ai_message(msg)
 ```
 
-### WebSocket Stream 사용하기 
+### 使用 WebSocket 流
 
-#### Client 동작
+#### 客户端操作
 
-WebSocket을 연결하기 위하여 endpoint를 접속을 수행합니다. onmessage()로 메시지를 받습니다. WebSocket이 연결되면 onopen()로 초기화를 수행합니다. 일정 간격으로 keep alive 동작을 수행합니다. 네트워크 재접속 등의 이유로 세션이 끊어지면 onclose()로 확인할 수 있습니다.
+要连接 WebSocket，请连接端点。您通过 onmessage() 收到一条消息。当 WebSocket 连接时，通过 onopen() 执行初始化。保活操作定期执行。如果由于网络重连等原因导致会话断开，可以通过onclose()进行检查。
 
 ```python
 const ws = new WebSocket(endpoint);
@@ -205,7 +204,7 @@ ws.onclose = function () {
 };
 ```
 
-발신 메시지는 JSON 포맷으로 아래와 같이 userId, 요청시간, 메시지 타입과 메시지를 포함합니다. 발신시 WebSocket의 send()을 이용하여 발신합니다. 발신시점에 세션이 연결되어 있지 않다면 연결하고 재시도하도록 알림을 표시합니다.
+发送的消息为JSON格式，包括userId、请求时间、消息类型和消息内容，如下所示。发送时，使用WebSocket的send()。如果发送时会话未连接，则会显示一条通知以进行连接并重试。
 
 ```python
 sendMessage({
@@ -227,9 +226,9 @@ function sendMessage(message) {
 }
 ```
 
-#### Server 동작
+#### 服务器操作
 
-Client로 부터 메시지 수신은 Lambda로 전달된 event에서 connectionId와 routeKey를 이용해 수행합니다. 이때 keep alive 동작을 수행하여 세션을 유지합니다. 메시지 발신은 boto3로 "apigatewaymanagementapi"로 client를 정의한 후에 client.post_to_connection()로 전송합니다.
+使用传递到 Lambda 的事件中的connectionId 和routeKey 来执行从客户端接收消息。此时会执行保活操作来维持会话。要发送消息，请在 boto3 中使用“apigatewaymanagementapi”定义客户端，然后使用 client.post_to_connection() 发送。
 
 ```python
 connection_url = os.environ.get('connection_url')
@@ -264,9 +263,9 @@ def lambda_handler(event, context):
                 msg, reference = getResponse(connectionId, jsonBody)
 ```
 
-### Prompt 사용 예: 번역하기
+### 提示用法示例：翻译
 
-Prompt Engineering을 이용하여 손쉽게 한/영 번역을 수행합니다.
+使用 Prompt Engineering 轻松执行韩语/英语翻译。
 
 ```python
 def translate_text(chat, text):    
@@ -304,9 +303,9 @@ def translate_text(chat, text):
 ```
 
 
-### Prompt 사용 예: 문법 오류 고치기
+### 提示使用示例：修复语法错误
 
-Prompt Engineering을 이용해서 한/영 문법 오류 고치는 API를 만들 수 있습니다.
+使用 Prompt Engineering，您可以创建一个纠正韩语/英语语法错误的 API。
 
 ```python
 def check_grammer(chat, text):
@@ -324,9 +323,9 @@ def check_grammer(chat, text):
     prompt = ChatPromptTemplate.from_messages([("system", system), ("human", human)])
 ```    
 
-### Prompt 사용 예: 코드 요약하기
+### 提示使用示例：总结代码
 
-Prompt Engineering을 이용해서 코드 요약하기 API를 만들 수 있습니다.
+您可以使用 Prompt Engineering 创建代码摘要 API。
 
 ```python
 def summary_of_code(chat, code, mode):
@@ -346,7 +345,7 @@ def summary_of_code(chat, code, mode):
 
 ### RAG
 
-RAG에서는 context tag를 이용해 Relevant Documents를 넣도록  Prompt를 구성합니다. 
+在 RAG 中，提示被配置为使用上下文标签包含相关文档。
 
 ```python
 def query_using_RAG_context(connectionId, requestId, chat, context, revised_question):    
@@ -363,7 +362,7 @@ def query_using_RAG_context(connectionId, requestId, chat, context, revised_ques
     prompt = ChatPromptTemplate.from_messages([("system", system), ("human", human)])
 ```
 
-History를 이용한 revised question과 Stream을 활용해서 성능 및 사용성을 높입니다.
+通过使用修订后的问题和使用历史记录的流来提高性能和可用性。
 
 ```python
     chain = prompt | chat
@@ -380,7 +379,7 @@ History를 이용한 revised question과 Stream을 활용해서 성능 및 사�
     return msg
 ```
 
-OpenSearch를 이용해 Vector Store를 정의하고, 읽어온 문서를 등록합니다.
+使用 OpenSearch 定义向量存储并注册读取的文档。
 
 ```python
 def store_document_for_opensearch(bedrock_embeddings, docs, documentId):
@@ -397,7 +396,7 @@ def store_document_for_opensearch(bedrock_embeddings, docs, documentId):
         response = vectorstore.add_documents(docs, bulk_size = 2000)
 ```
 
-Vectorstore를 통해 관련된 문서를 추출하여 context로 활용합니다.
+通过 Vectorstore 提取相关文档并将其用作上下文。
 
 ```python
 # vector search (semantic) 
@@ -418,9 +417,9 @@ if(len(rel_docs)>=1):
 msg = query_using_RAG_context(connectionId, requestId, chat, relevant_context, revised_question)
 ```
 
-### RAG의 Parent/Child Chunking
+### RAG 的父/子分块
 
-문서를 크기에 따라 parent chunk와 child chunk로 나누어서 child chunk를 찾은 후에 LLM의 context에는 parent chunk를 사용하면, 검색의 정확도는 높이고 충분한 문서를 context로 활용할 수 있습니다. RAG의 검색정확도를 향상시키기 위한 여러가지 방법중에 Parent/Child Chunking을 이용할 수 있습니다. [parent-document-retrieval.md](https://github.com/kyopark2014/korean-chatbot-using-amazon-bedrock/blob/main/parent-document-retrieval.md)에서는 Parent/child로 chunking 전략에 대해 설명하고 있습니다.
+如果将文档按照大小分为父块和子块，找到子块，然后使用父块作为LLM的上下文，则可以增加搜索的准确性并使用足够的文档作为上下文。在提高RAG搜索精度的各种方法中，可以使用Parent/Child Chunking。parent-document-retrieval.md解释了父/子分块策略。
 
 ```python
 parent_splitter = RecursiveCharacterTextSplitter(
@@ -437,21 +436,23 @@ child_splitter = RecursiveCharacterTextSplitter(
 )
 ```
 
-Parent/Child Chunking을 수행하는 과정은 아래와 같습니다. 
+执行父/子分块的过程如下。
 
-1) parent/child로 chunking을 수행합니다.
+由父/子执行分块。
 
-2) parent doc을 OpenSearch에 add하면, parent_doc_id가 생성됩니다. 
+当您将父文档添加到 OpenSearch 时，会创建parent_doc_id。
 
-3) child doc의 meta에 parent_doc_id를 등록합니다.
-  
-4) 문서 검색시, 필터를 이용해 child 문서를 검색합니다.
-  
-5) 검색된 child 문서들이 parent가 동일하다면 중복을 제거합니다.
-  
-6) parent_doc_id를 이용하여 OpenSearch에서 parent doc을 가져와 context로 활용합니다. 
+在子文档的元数据中注册parent_doc_id。
 
-Parent chunk의 meta에 “doc_level”을 “parent”로 지정하고 OpenSearch에 등록합니다. 
+搜索文档时，使用过滤器搜索子文档。
+
+如果搜索的子​​文档具有相同的父文档，则会删除重复项。
+
+使用parent_doc_id 从 OpenSearch 检索父文档并将其用作上下文。
+
+
+在父块的元数据中将“doc_level”指定为“parent”，并将其注册到 OpenSearch 中。
+
 
 ```python
 parent_docs = parent_splitter.split_documents(docs)
@@ -462,7 +463,7 @@ parent_docs = parent_splitter.split_documents(docs)
         parent_doc_ids = vectorstore.add_documents(parent_docs, bulk_size = 10000)
 ```
 
-Child chunk의 meta에 “doc_level”을 “child”로 지정하고 “parent_doc_id”로 parent chunk의 document id를 지정합니다. 
+在子块的元数据中，将“doc_level”指定为“child”，将父块的文档id指定为“parent_doc_id”。
 
 ```python                
         child_docs = []
@@ -479,7 +480,7 @@ Child chunk의 meta에 “doc_level”을 “child”로 지정하고 “parent_
         ids = parent_doc_ids+child_doc_ids
 ```
 
-OpenSearch에 RAG 정보를 요청할 때에 아래와 같이 pre_filter로 doc_level이 child인 문서들을 검색합니다. 
+当从 OpenSearch 请求 RAG 信息时，使用 pre_filter 搜索 doc_level 为 child 的文档，如下所示。 
 
 ```python
 def get_documents_from_opensearch(vectorstore_opensearch, query, top_k):
@@ -497,7 +498,7 @@ def get_documents_from_opensearch(vectorstore_opensearch, query, top_k):
             doc_level = re[0].metadata['doc_level']
 ```
 
-Child chunk의 parent_doc_id가 중복이 아닌 경우만 relevant_document로 활용합니다. 
+仅当子块的parent_doc_id不重复时，才将其用作relevant_document。
 
 ```python
       
@@ -514,7 +515,7 @@ Child chunk의 parent_doc_id가 중복이 아닌 경우만 relevant_document로 
 return relevant_documents
 ```
 
-OpenSearch에서 parent doc의 가져와서 RAG에서 활용합니다.
+从 OpenSearch 导入父文档并在 RAG 中使用它。
 
 ```python
 relevant_documents = get_documents_from_opensearch(vectorstore_opensearch, keyword, top_k)
@@ -535,7 +536,7 @@ def get_parent_document(parent_doc_id):
     return source['text'], metadata['uri']
 ```
 
-Meta 파일을 생성하면 문서 업데이트나 삭제시 유용하게 사용할 수 있습니다.
+创建元文件在更新或删除文档时非常有用。
 
 ```python
 def create_metadata(bucket, key, meta_prefix, s3_prefix, uri, category, documentId, ids):
@@ -569,7 +570,7 @@ def create_metadata(bucket, key, meta_prefix, s3_prefix, uri, category, document
         raise Exception ("Not able to create meta file")
 ```
 
-문서를 삭제하거나 업데이트 할 때에 OpenSearch의 문서를 삭제합니다. 
+删除或更新文档时，OpenSearch 文档将被删除。
 
 ```python
 def delete_document_if_exist(metadata_key):
@@ -589,9 +590,9 @@ def delete_document_if_exist(metadata_key):
             print('no meta file: ', metadata_key)
 ```
 
-### RAG의 파일 업로드
+### RAG 中的文件上传
 
-S3에 Object 업로드시 발생하는 이벤트 형태에는 OBJECT_CREATED_PUT (일반파일), CREATED_COMPLETE_MULTIPART_UPLOAD (대용량 파일)이 있습니다.
+将对象上传到 S3 时发生的事件类型包括 OBJECT_CREATED_PUT（普通文件）和 CREATED_COMPLETE_MULTIPART_UPLOAD（大文件）。
 
 ```python
 const s3PutEventSource = new lambdaEventSources.S3EventSource(s3Bucket, {
@@ -607,9 +608,9 @@ const s3PutEventSource = new lambdaEventSources.S3EventSource(s3Bucket, {
   lambdaS3eventManager.addEventSource(s3PutEventSource);
 ```
 
-### RAG의 결과를 신뢰도에 따라 정렬하기
+### 按置信度对 RAG 结果进行排序
 
-FAISS를 이용해 일정 신뢰도 이상만을 관련된 문서로 활용합니다. 
+使用 FAISS，只有超过一定可靠性水平的文档才被用作相关文档。
 
 ```python
 if len(relevant_docs) >= 1:
@@ -653,7 +654,7 @@ def priority_search(query, relevant_docs, bedrock_embeddings):
 
 ### LangChain Agent
 
-ChatBedrock의 Llama3를 지원하고 있지만 Agent는 아직 지원하고 있지 않습니다. 관련 에러는 아래와 같습니다. 
+支持 ChatBedrock 的 Llama3，但尚不支持 Agent。相关错误如下。
 
 ```text
 for chunk in self._prepare_input_and_invoke_stream(
@@ -662,91 +663,91 @@ raise ValueError(
 ValueError: Stop sequence key name for meta is not supported.
 ```
 
-관련 이슈는 아래와 같습니다.
+相关问题如下。
 
 [Stop sequence key name for meta is not supported](https://github.com/langchain-ai/langchain/issues/19220)
 
 [Error : Stop sequence key name for {meta or mistral or any other mode} is not supported](https://github.com/langchain-ai/langchain/issues/20053)
 
-## 직접 실습 해보기
+## 自己尝试一下
 
-### 사전 준비 사항
+### 提前准备
 
-이 솔루션을 사용하기 위해서는 사전에 아래와 같은 준비가 되어야 합니다.
+为了使用，必须提前做好以下准备工作。
 
-- [AWS Account 생성](https://repost.aws/ko/knowledge-center/create-and-activate-aws-account)
+- [AWS Account](https://repost.aws/ko/knowledge-center/create-and-activate-aws-account)
 
-### CDK를 이용한 인프라 설치
+### 使用CDK安装基础设施
 
-본 실습에서는 Oregon 리전 (us-west-2)을 사용합니다. [인프라 설치](./deployment.md)에 따라 CDK로 인프라 설치를 진행합니다. 
+该实验室使用俄勒冈州地区 (us-west-2)。根据基础设施安装，使用 CDK 继续进行基础设施安装。(./deployment.md). 
 
-### 실행 결과
+### 执行结果
 
-#### 기본 채팅
+#### 基本聊天
 
-메뉴에서 "General Conversation"을 선택하고 먼저 "나는 여행을 좋아해"라고 입력한 후에, 다시 아래처럼 "제주"라고 입력합니다. 대화 이력을 활용하였기 때문에 "제주"이라는 질문에 제주 여행과 관련된 대화를 수행합니다.  
+从菜单中选择“一般对话”，首先输入“我喜欢旅行”，然后再次输入“济州岛”，如下所示。因为我们使用了对话历史记录，所以当被问到“济州岛”时，我们会进行与济州岛旅行相关的对话。
 
 ![image](https://github.com/user-attachments/assets/8d0cd216-11e8-4d79-af62-c925808584e5)
 
 
-브라우저에서 뒤로가기를 선택하여 아래와 같이 Conversation Type을 "4. Translation"로 선택합니다. 
+在浏览器中选择“返回”，然后选择“4.翻译”作为对话类型，如下所示。
 
 ![image](https://github.com/kyopark2014/llama3-rag-workshop/assets/52392004/231916ba-b1e7-41ec-a8a1-dd832629b943)
 
-이후, "경주는 우리나라의 역사적인 도시입니다. 경주는 신라왕조의 수도였으며, 많은 문화유산을 가지고 있습니다. 경주에는 다양한 관광지가 있습니다. 불국사는 유네스코 세계문화유산으로 지정된 사찰입니다. 이 곳에는 많은 문화재가 있습니다. 둘째, 석굴암은 불국사와 함께 유네스코 세계문화유산으로 지정된 석굴입니다. 이 곳에는 많은 불상이 있습니다. 셋째, 경주의 역사적인 문화유산을 느낄 수 있는 곳입니다. 이 곳에는 안압지, 첨성대, 황룡사지 등이 있습니다. 넷째, 양동마을은 전통한옥마을로 옛날의 모습을 그대로 간직하고 있습니다. 경주에는 역사적인 문화유산이 많아 역사에 관심이 있는 분들에게 추천합니다. 또한, 경주는 자연경관도 아름답습니다. 경주를 방문하여 다양한 경험을 하실 수 있습니다. "라고 입력합니다. 이때의 번역 결과는 아래와 같습니다.
+庆州是韩国的一座历史名城，是新罗王朝的首都，拥有众多的文化遗产，佛国寺是被联合国教科文组织列为世界遗产的寺庙。其次，石窟庵与佛国寺一起被列为联合国教科文组织世界遗产。第三，这里是可以体验庆州历史文化遗产的地方。第四，良洞村是保留着韩国传统民居的村落。保留了原来的面貌，推荐给对历史感兴趣的人“可以参观并体验各种各样的事情”。此时的翻译结果如下。
 
 ![image](https://github.com/user-attachments/assets/dd1063a5-6d57-4754-9d99-21aee0d92254)
 
-반대로 영어를 한국어로 번역할 수 있는지 확인하기 위하여, "Gyeongju is a historic city in our country. It was the capital of the Silla Kingdom and has many cultural heritages. Gyeongju has various tourist attractions. Bulguksa Temple is a UNESCO World Cultural Heritage site and has many cultural assets. This place has many Buddha statues. Second, Seokguram Grotto is a UNESCO World Cultural Heritage site along with Bulguksa Temple and has many Buddha statues. Third, it is a place where you can feel Gyeongju's historical cultural heritage. This place has Anapji Pond, Cheomseongdae Observatory, and Hwangnyongsa Temple, among others. Fourth, Yangdong Folk Village is a traditional Korean village that has preserved its old appearance. Gyeongju is recommended for those interested in history because it has many historical cultural heritages. Additionally, Gyeongju's natural scenery is also beautiful. You can have various experiences by visiting Gyeongju."로 입력합니다. 
+反过来看看英语是否可以翻译成中文, "Gyeongju is a historic city in our country. It was the capital of the Silla Kingdom and has many cultural heritages. Gyeongju has various tourist attractions. Bulguksa Temple is a UNESCO World Cultural Heritage site and has many cultural assets. This place has many Buddha statues. Second, Seokguram Grotto is a UNESCO World Cultural Heritage site along with Bulguksa Temple and has many Buddha statues. Third, it is a place where you can feel Gyeongju's historical cultural heritage. This place has Anapji Pond, Cheomseongdae Observatory, and Hwangnyongsa Temple, among others. Fourth, Yangdong Folk Village is a traditional Korean village that has preserved its old appearance. Gyeongju is recommended for those interested in history because it has many historical cultural heritages. Additionally, Gyeongju's natural scenery is also beautiful. You can have various experiences by visiting Gyeongju.". 
 
 <img width="876" alt="image" src="https://github.com/user-attachments/assets/7a0bf9b5-0a11-41ed-ba9e-36b965bdd058">
 
 
 
-메뉴에서 "5. Grammatical Error Correction"을 선택합니다. 이후 "Gyeongju are a historic city in our country. It were the capital of the Silla Kingdom and have many cultural heritages."로 입력후 결과를 확인합니다. 아래와 같이 잘못된 문법과 수정된 내용을 보여줍니다.
+从菜单中选择“5.语法错误纠正”。然后输入“庆州是我国的一座历史名城。它是新罗王国的首都，拥有许多文化遗产”并查看结果。不正确的语法和更正的内容如下所示。
 
 ![image](https://github.com/kyopark2014/llama3-rag-workshop/assets/52392004/9b22c400-5776-4ed5-b1cb-c551338fe053)
 
 
+现在要测试 RAG，请从菜单中选择“3. RAG-opensearch（混合）”，如下所示。
 
-이제 RAG를 시험하기 위하여, 메뉴에서 아래처럼 "3. RAG-opensearch (hybrid)"을 선택합니다.
 
 ![image](https://github.com/kyopark2014/llama3-rag-workshop/assets/52392004/b2daa766-a9f8-4b79-8077-a14c58e7f0f9)
 
-[error_code.pdf](./contents/error_code.pdf)을 다운로드 한 후에, 채팅창의 파일 아이콘을 선택하여 업로드를 하면 아래와 같이 파일 내용을 요약한 결과를 확인할 수 있습니다.
+[error_code.pdf](./contents/error_code.pdf)下载error_code.pdf后，选择聊天窗口中的文件图标进行上传，您可以看到文件内容摘要，如下所示。
 
 ![image](https://github.com/kyopark2014/llama3-rag-workshop/assets/52392004/5974492a-d57b-4189-bd25-7fbf7fc5b243)
 
-이제, 아래와 같이 "보일러 에러 코드에 대해 상세히 설명해줘."라고 입력한 후에 결과를 확인합니다.
+现在，输入如下所示的“请详细描述锅炉错误代码”并检查结果。
 
 ![image](https://github.com/kyopark2014/llama3-rag-workshop/assets/52392004/bd740367-2d61-4d8c-9a16-6c436445a793)
 
-결과의 아래쪽을 보면, 아래와 같이 OpenSearch의 Vector/Keyword 검색을 통해 결과가 얻어졌음을 알수 있습니다. 
+如果您查看结果底部，您可以看到结果是通过 OpenSearch 的矢量/关键字搜索获得的，如下所示。
 
 ![image](https://github.com/kyopark2014/llama3-rag-workshop/assets/52392004/5ab71703-a6a8-4dfd-b406-bfa719e58259)
 
 
-[ReAct-SYNERGIZING REASONING AND ACTING IN LANGUAGE MODELS](https://arxiv.org/pdf/2210.03629)을 다운로드 한 후에 파일 아이콘을 선택하여 업로드하면 아래와 같이 요약 결과를 보여줍니다.
+[ReAct-SYNERGIZING REASONING AND ACTING IN LANGUAGE MODELS](https://arxiv.org/pdf/2210.03629)选择文件图标上传，将显示汇总结果，如下所示.
 
 ![image](https://github.com/kyopark2014/llama3-rag-workshop/assets/52392004/3b1c92f7-80cd-41be-af25-c7c1a47b79f9)
 
-이제, "Tell me about KNOWLEDGE-INTENSIVE REASONING TASKS"을 입력하면 아래와 같이 간단히 설명해줍니다.
+现在，如果您输入 "Tell me about KNOWLEDGE-INTENSIVE REASONING TASKS"您将收到如下简短说明.
 
 ![image](https://github.com/kyopark2014/llama3-rag-workshop/assets/52392004/bbcfa84a-86ff-4cdf-a298-59adbaed0207)
 
-좀더 자세히 알기 위하여, 아래처럼 추가 질문을 하면 상세한 정보를 얻을 수 있습니다.
+要了解更多信息，您可以提出以下附加问题以获得详细信息。
 
 ![image](https://github.com/kyopark2014/llama3-rag-workshop/assets/52392004/cc7eb464-a133-41e8-9e6d-a5c11467d022)
 
 
 
-## 리소스 정리하기 
+## 整理您的资源
 
-더이상 인프라를 사용하지 않는 경우에 아래처럼 모든 리소스를 삭제할 수 있습니다. 
+如果您不再使用该基础架构，您可以删除所有资源，如下所示。
 
-1) [API Gateway Console](https://us-west-2.console.aws.amazon.com/apigateway/main/apis?region=us-west-2)로 접속하여 "api-chatbot-for-llama3-rag-workshop", "api-llama3-rag-workshop"을 삭제합니다.
+1) [API Gateway Console](https://us-west-2.console.aws.amazon.com/apigateway/main/apis?region=us-west-2)访问API网关控制台， 删除“api-chatbot-for-llama3-rag-workshop”和“api-llama3-rag-workshop”。
 
-2) [Cloud9 console](https://us-west-2.console.aws.amazon.com/cloud9control/home?region=us-west-2#/)에 접속하여 아래의 명령어로 전체 삭제를 합니다.
+2) [Cloud9 console](https://us-west-2.console.aws.amazon.com/cloud9control/home?region=us-west-2#/)访问Cloud9 控制台并使用以下命令删除所有内容。
 
 ```text
 cd ~/environment/llama3.1-rag-bot/cdk-llama3-rag-workshop/ && cdk destroy --all
